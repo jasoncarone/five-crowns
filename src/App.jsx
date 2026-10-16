@@ -250,7 +250,112 @@ function PlayerHistoryModal({ player, playerIndex, currentRound, onClose }) {
   );
 }
 
-function ScoreEntryScreen({ game, onSaveRound, onFinishGame, onBack }) {
+function ScorecardScreen({ game, onBack, onEditScore }) {
+  const totals = game.players.map((p) => getTotal(p.scores));
+  const minTotal = Math.min(...totals.filter((t) => t > 0));
+  const [editing, setEditing] = useState(null); // { roundIndex, playerIndex }
+  const [editVal, setEditVal] = useState("");
+
+  const startEdit = (ri, pi) => {
+    setEditing({ ri, pi });
+    setEditVal(String(game.players[pi].scores[ri]));
+  };
+
+  const commitEdit = () => {
+    if (!editing) return;
+    const val = parseInt(editVal);
+    if (!isNaN(val) && val >= 0) {
+      onEditScore(editing.ri, editing.pi, val);
+    }
+    setEditing(null);
+  };
+
+  return (
+    <div style={styles.screen}>
+      <button style={styles.backBtn} onClick={onBack}>← Back to Game</button>
+      <h2 style={{ ...styles.pageTitle, marginBottom: 4 }}>Scorecard</h2>
+      <p style={{ ...styles.pageSubtitle, marginBottom: 16 }}>
+        Tap any score to correct it
+      </p>
+
+      <div style={styles.scorecard}>
+        {/* Header row */}
+        <div style={styles.scorecardHeader}>
+          <div style={styles.scorecardRound}>Round</div>
+          {game.players.map((p, i) => (
+            <div key={i} style={{ ...styles.scorecardPlayer, color: PLAYER_COLORS[i % PLAYER_COLORS.length].light }}>
+              {p.name}
+            </div>
+          ))}
+        </div>
+
+        {/* Round rows — only rounds that have been played */}
+        {ROUNDS.slice(0, game.currentRound).map((r, ri) => (
+          <div key={ri} style={{ ...styles.scorecardRow, background: ri % 2 === 0 ? "rgba(255,255,255,0.03)" : "transparent" }}>
+            <div style={styles.scorecardRound}>{r.label}</div>
+            {game.players.map((p, pi) => {
+              const isEditing = editing && editing.ri === ri && editing.pi === pi;
+              const score = p.scores[ri];
+              return (
+                <div key={pi} style={{ flex: 1, textAlign: "center" }}>
+                  {isEditing ? (
+                    <input
+                      autoFocus
+                      style={styles.editInput}
+                      type="number"
+                      inputMode="numeric"
+                      value={editVal}
+                      onChange={(e) => setEditVal(e.target.value.replace(/[^0-9]/g, ""))}
+                      onBlur={commitEdit}
+                      onKeyDown={(e) => { if (e.key === "Enter") commitEdit(); if (e.key === "Escape") setEditing(null); }}
+                    />
+                  ) : (
+                    <span
+                      style={{
+                        ...styles.scorecardCell,
+                        display: "inline-block",
+                        width: "100%",
+                        cursor: "pointer",
+                        color: score === 0 ? "#52B788" : "#C8C0B0",
+                        borderRadius: 4,
+                        padding: "2px 0",
+                      }}
+                      onClick={() => startEdit(ri, pi)}
+                    >
+                      {score === 0 ? "✓" : score}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        ))}
+
+        {game.currentRound === 0 && (
+          <div style={{ textAlign: "center", color: "#6B7C8A", padding: "20px 0", fontSize: 13 }}>
+            No rounds played yet
+          </div>
+        )}
+
+        {/* Totals row */}
+        {game.currentRound > 0 && (
+          <div style={styles.scorecardTotals}>
+            <div style={styles.scorecardRound}>Total</div>
+            {totals.map((t, i) => (
+              <div key={i} style={{
+                ...styles.scorecardCell,
+                fontWeight: 700,
+                color: t === minTotal && t > 0 ? "#F4D35E" : "#fff",
+              }}>{t}</div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ScoreEntryScreen({ game, onSaveRound, onFinishGame, onBack, onViewScorecard }) {
   const round = ROUNDS[game.currentRound];
   const [scores, setScores] = useState(game.players.map(() => ""));
   const [modalPlayer, setModalPlayer] = useState(null); // index of player to show history for
@@ -287,7 +392,14 @@ function ScoreEntryScreen({ game, onSaveRound, onFinishGame, onBack }) {
         />
       )}
 
-      <button style={styles.backBtn} onClick={onBack}>← Back</button>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+        <button style={styles.backBtn} onClick={onBack}>← Back</button>
+        {game.currentRound > 0 && (
+          <button style={styles.scorecardBtn} onClick={onViewScorecard}>
+            📋 Scorecard
+          </button>
+        )}
+      </div>
 
       {/* Round Header */}
       <div style={styles.roundHeader}>
@@ -417,7 +529,7 @@ function ResultsScreen({ game, onBack, onNewGame }) {
 
 export default function App() {
   const [games, setGames] = useLocalStorage("fivecrowns_games", []);
-  const [screen, setScreen] = useState("home"); // home | setup | game | results
+  const [screen, setScreen] = useState("home"); // home | setup | game | results | scorecard
   const [activeGameId, setActiveGameId] = useState(null);
 
   const activeGame = games.find((g) => g.id === activeGameId);
@@ -467,6 +579,21 @@ export default function App() {
     }
   };
 
+  const editScore = (roundIndex, playerIndex, newScore) => {
+    setGames((prev) =>
+      prev.map((g) => {
+        if (g.id !== activeGameId) return g;
+        const updatedPlayers = g.players.map((p, pi) => {
+          if (pi !== playerIndex) return p;
+          const newScores = [...p.scores];
+          newScores[roundIndex] = newScore;
+          return { ...p, scores: newScores };
+        });
+        return { ...g, players: updatedPlayers };
+      })
+    );
+  };
+
   const deleteGame = (id) => {
     setGames((prev) => prev.filter((g) => g.id !== id));
   };
@@ -492,12 +619,20 @@ export default function App() {
         {screen === "setup" && (
           <SetupScreen onStart={createGame} onBack={() => setScreen("home")} frequentPlayers={frequentPlayers} />
         )}
+        {screen === "scorecard" && activeGame && (
+          <ScorecardScreen
+            game={activeGame}
+            onBack={() => setScreen("game")}
+            onEditScore={editScore}
+          />
+        )}
         {screen === "game" && activeGame && !activeGame.finished && (
           <ScoreEntryScreen
             game={activeGame}
             onSaveRound={saveRound}
             onFinishGame={() => setScreen("results")}
             onBack={() => setScreen("home")}
+            onViewScorecard={() => setScreen("scorecard")}
           />
         )}
         {(screen === "results" || (screen === "game" && activeGame?.finished)) && activeGame && (
@@ -947,5 +1082,27 @@ const styles = {
     fontSize: 13,
     textAlign: "center",
     color: "#C8C0B0",
+  },
+  scorecardBtn: {
+    background: "rgba(244,211,94,0.1)",
+    border: "1px solid rgba(244,211,94,0.25)",
+    color: "#F4D35E",
+    borderRadius: 8,
+    padding: "5px 12px",
+    fontSize: 13,
+    cursor: "pointer",
+    fontFamily: "'Georgia', serif",
+  },
+  editInput: {
+    width: "90%",
+    background: "rgba(255,255,255,0.15)",
+    border: "1px solid rgba(244,211,94,0.5)",
+    borderRadius: 4,
+    padding: "3px 4px",
+    color: "#fff",
+    fontSize: 13,
+    textAlign: "center",
+    outline: "none",
+    fontFamily: "'Georgia', serif",
   },
 };
